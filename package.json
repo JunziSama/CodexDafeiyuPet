@@ -1,0 +1,77 @@
+{
+  "name": "dsh-pet-indesktop",
+  "version": "0.2.0",
+  "description": "Independent EAC desktop pet: dsh-pet-indesktop webm animations driven by DeepSeek Harness session work states, with settings cards for add/show/hide/remove.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./lib/client.js",
+    "./protocol": "./src/protocol.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "src/",
+    "lib/",
+    "runtime/",
+    "scripts/",
+    "test/",
+    "cordis.patch.yml",
+    "requirements.txt",
+    "README.md",
+    "INSTALL.md",
+    "ANIMATION_SCHEDULE.md",
+    "BUBBLE_SPEC.md",
+    "COLOR_CALIBRATION.md",
+    "ASSET_LICENSE.md",
+    "CREDITS.md",
+    "docs/",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "engines": {
+    "node": ">=22.19"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-client-runtime": "*",
+    "@deepseek-ai/dsh-client-ui-slots": "*",
+    "@deepseek-ai/dsh-home-paths": "*",
+    "react": "^18.2.0"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "eac",
+    "desktop-pet",
+    "dsh-pet-indesktop"
+  ],
+  "scripts": {
+    "check": "node --check src/index.js && node --check src/helper-process.js && node --check src/companion-reducer.js && node --check lib/client.js && node --check scripts/install-local.mjs",
+    "test": "node --test test/reducer.test.mjs test/package.test.mjs test/helper-smoke.test.mjs test/client-smoke.test.mjs",
+    "install:local": "node scripts/install-local.mjs"
+  },
+  "license": "MIT"
+}

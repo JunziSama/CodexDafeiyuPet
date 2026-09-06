@@ -1,0 +1,87 @@
+{
+  "description": "大肥鱼增强桌宠：只发送去敏后的 Codex 任务状态到本机托盘控制器。",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABSOLUTE/PATH/codex-dafeiyu-enhanced/hooks/codex_event_hook.py",
+            "commandWindows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"D:\\.py\\dsh-pet-indesktop\\codex-dafeiyu-enhanced\\hooks\\invoke_hook.ps1\"",
+            "async": true,
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABSOLUTE/PATH/codex-dafeiyu-enhanced/hooks/codex_event_hook.py",
+            "commandWindows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"D:\\.py\\dsh-pet-indesktop\\codex-dafeiyu-enhanced\\hooks\\invoke_hook.ps1\"",
+            "async": true,
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABSOLUTE/PATH/codex-dafeiyu-enhanced/hooks/codex_event_hook.py",
+            "commandWindows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"D:\\.py\\dsh-pet-indesktop\\codex-dafeiyu-enhanced\\hooks\\invoke_hook.ps1\"",
+            "async": true,
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABSOLUTE/PATH/codex-dafeiyu-enhanced/hooks/codex_event_hook.py",
+            "commandWindows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"D:\\.py\\dsh-pet-indesktop\\codex-dafeiyu-enhanced\\hooks\\invoke_hook.ps1\"",
+            "async": true,
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABSOLUTE/PATH/codex-dafeiyu-enhanced/hooks/codex_event_hook.py",
+            "commandWindows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"D:\\.py\\dsh-pet-indesktop\\codex-dafeiyu-enhanced\\hooks\\invoke_hook.ps1\"",
+            "async": true,
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABSOLUTE/PATH/codex-dafeiyu-enhanced/hooks/codex_event_hook.py",
+            "commandWindows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"D:\\.py\\dsh-pet-indesktop\\codex-dafeiyu-enhanced\\hooks\\invoke_hook.ps1\"",
+            "async": true,
+            "timeout": 2
+          }
+        ]
+      }
+    ]
+  }
+}

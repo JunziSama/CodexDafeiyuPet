@@ -1,0 +1,17 @@
+{
+  "version": 5,
+  "facing": "left",
+  "scale": 0.72,
+  "on_top": true,
+  "idle_animation_frequency": "frequent",
+  "movement_frequency": "balanced",
+  "exit_animation_mode": "farewell_only",
+  "horizontal_auto_move_only": true,
+  "window_snap_enabled": true,
+  "window_snap_distance": 20,
+  "character": "shenshen",
+  "playback_speed": 1.0,
+  "mouse_through": false,
+  "drag_physics": false,
+  "auto_hide_fullscreen": true
+}

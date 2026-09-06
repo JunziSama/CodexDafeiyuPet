@@ -1,0 +1,11 @@
+- insert:
+    - id: pet-indesktop
+      name: dsh-pet-indesktop
+      config:
+        enabled: true
+        scale: 0.70
+        reducedMotion: false
+        cards:
+          - id: card-0
+            name: 独立桌宠
+            visible: true
