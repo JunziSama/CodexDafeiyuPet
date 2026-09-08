@@ -162,6 +162,14 @@ def runtime_message(event: dict[str, Any], visible: bool = True) -> dict[str, An
     kind = "pulse" if event.get("kind") in {"tool-end", "turn-stop"} else "state"
     if event.get("event") == "UserPromptSubmit":
         kind = "task"
+    cue = {
+        "UserPromptSubmit": "task-thinking",
+        "PreToolUse": "tool-working",
+        "PermissionRequest": "approval-waiting",
+        "Stop": "task-success",
+    }.get(str(event.get("event") or ""))
+    if event.get("event") == "PostToolUse":
+        cue = "task-error" if event.get("failed") else "tool-finished"
     return {
         "protocolVersion": 1,
         "kind": kind,
@@ -169,5 +177,6 @@ def runtime_message(event: dict[str, Any], visible: bool = True) -> dict[str, An
         "message": message,
         "detail": f"{agent_label} · {state_detail(state)}",
         "agentLabel": agent_label,
+        "animationCue": cue,
         "visible": bool(visible),
     }

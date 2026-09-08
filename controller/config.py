@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 from pathlib import Path
@@ -109,11 +110,20 @@ class ConfigStore:
         self.data.update(values)
         self.save()
 
-    def save(self) -> None:
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+    def save(self) -> bool:
         temp = self.path.with_suffix(".tmp")
-        temp.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(temp, self.path)
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            temp.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temp, self.path)
+            return True
+        except OSError as exc:
+            logging.getLogger("dafeiyu.config").warning("controller config save failed: %s", type(exc).__name__)
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return False
 
     def bridge_token(self) -> str:
         try:

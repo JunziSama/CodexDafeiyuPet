@@ -71,7 +71,11 @@ class ControllerCore:
         # transitions and pipe writes are serialized here; no Qt widget is
         # touched by ControllerCore.
         with self._message_lock:
-            self._handle_message_locked(message)
+            try:
+                self._handle_message_locked(message)
+            except Exception as exc:
+                # A malformed or future event must not stop the bridge/timer.
+                self.last_error = f"event-{type(exc).__name__}"
 
     def _handle_message_locked(self, message: dict[str, Any]) -> None:
         if message.get("source") == "pet":
@@ -142,7 +146,7 @@ class ControllerCore:
                 self.pet.stop("codex-exit")
         elif kind == "start-error":
             self.last_error = str(message.get("detail") or "start-error")
-            self.restart_not_before = time.monotonic() + 5.0
+            self.restart_not_before = time.monotonic() + float(message.get("retryAfter") or 1.5)
         elif kind == "exit":
             expected = message.get("expected")
             code = int(message.get("code") or 0)
@@ -157,15 +161,23 @@ class ControllerCore:
                 self.disable_until_manual_reopen()
             else:
                 self.last_error = f"pet-exit-{code}"
-                self.restart_not_before = time.monotonic() + 1.5
+                self.restart_not_before = time.monotonic() + float(message.get("retryAfter") or 1.5)
 
     def _handle_control(self, message: dict[str, Any]) -> None:
         action = message.get("action")
         if action == "manual-open":
+            reset = getattr(self.pet, "reset_failure_lock", None)
+            if callable(reset):
+                reset()
+            self.restart_not_before = 0.0
             self.codex_exit_confirmed = False
             self.config.update(enhanced_enabled=True, auto_accompany=True, visible=True)
             self._reconcile(force=True)
         elif action == "show":
+            reset = getattr(self.pet, "reset_failure_lock", None)
+            if callable(reset):
+                reset()
+            self.restart_not_before = 0.0
             self.config.update(enhanced_enabled=True, visible=True)
             self._reconcile(force=True)
             self._send_visibility(True)
@@ -303,5 +315,6 @@ class ControllerCore:
             f"自动伴随：{'开启' if self.config.get('auto_accompany') else '关闭'}",
             f"下次允许启动：{'是' if self.config.get('enhanced_enabled') else '否，需手动打开'}",
             f"状态：{self.current_message or self.current_state}",
+            *( [f"自动重启：已锁定（连续失败 {getattr(self.pet, 'consecutive_failures', 0)} 次）"] if getattr(self.pet, "restart_blocked", False) else [] ),
             *( [f"最近错误：{self.last_error}"] if self.last_error else [] ),
         ])

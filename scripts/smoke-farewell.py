@@ -14,6 +14,7 @@ from pathlib import Path
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="离屏验证增强桌宠告别协议")
     parser.add_argument("--package-root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--vendor-root", type=Path)
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument(
         "--mode",
@@ -27,6 +28,7 @@ def main() -> int:
     args = parse_args()
     root = args.package_root.resolve()
     runtime = root / "runtime"
+    vendor = (args.vendor_root or runtime / "vendor").resolve()
     entry = runtime / "eac_entry.py"
     if not entry.is_file():
         raise FileNotFoundError(entry)
@@ -34,7 +36,7 @@ def main() -> int:
     env = os.environ.copy()
     env.update({
         "QT_QPA_PLATFORM": "offscreen",
-        "PYTHONPATH": os.pathsep.join([str(runtime / "vendor"), str(runtime)]),
+        "PYTHONPATH": os.pathsep.join([str(vendor), str(runtime)]),
         "DSH_PET_VISIBLE": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
     })

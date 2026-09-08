@@ -43,6 +43,7 @@ from .config import (
 )
 from .library import MovieLibrary
 from . import movement as movement_mod
+from .timing import physics_substeps, smooth_interval_ms
 from . import menu_position as menu_position_mod
 from . import physics as physics_mod
 from . import snapping as snapping_mod
@@ -242,6 +243,8 @@ class PetWindow(QWidget):
         self.clicks = self.cats['clicks']
         self.drag = self.cats['drag']
         self.acts = self.cats['acts']
+        self.work_events = self.cats.get('work_events', [])
+        self.balances = self.cats.get('balances', [])
 
         # 预载拖拽动画首帧，避免第一次进入拖拽状态时同步解码卡顿
         if self.drag:
@@ -326,11 +329,13 @@ class PetWindow(QWidget):
         # ---- 移动驱动 ----
         self._move_plan: dict | None = None
         self._move_timer = QTimer(self)
-        self._move_timer.setInterval(33)         # ~30fps 位置插值
+        self._move_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._move_timer.setInterval(16)
         self._move_timer.timeout.connect(self._on_move_tick)
 
         # ---- 点击 Q 弹效果 ----
         self._squash_timer = QTimer(self)
+        self._squash_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._squash_timer.setInterval(16)
         self._squash_timer.timeout.connect(self._on_squash_tick)
         self._squash_clock = QElapsedTimer()
@@ -340,6 +345,7 @@ class PetWindow(QWidget):
 
         # ---- 拖动物理 ----
         self._physics_timer = QTimer(self)
+        self._physics_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._physics_timer.setInterval(16)
         self._physics_timer.timeout.connect(self._on_physics_tick)
         self._physics_mode: str | None = None  # None / 'drag' / 'throw'
@@ -347,6 +353,12 @@ class PetWindow(QWidget):
         self._phys_vel = [0.0, 0.0]
         self._drag_target: QPoint | None = None
         self._trail: list = []  # 拖拽途中鼠标轨迹采样 [(t, x, y)]，松手时用它估算抛掷初速
+        self._physics_last_at: float | None = None
+        self._wired_clips: set[str] = set()
+        self._warm_interaction_token: int | None = None
+        self._animation_origin = 'idle'
+        self._hidden_paused = False
+        self._screen_signal_wired = False
 
         # ---- 全屏应用自动隐藏（Windows）----
         # 前台窗口覆盖整个屏幕几何（含任务栏区域）时自动隐藏桌宠，
@@ -359,12 +371,8 @@ class PetWindow(QWidget):
 
         # ---- 尺寸与初始状态 ----
         self._apply_scale()
-        for name, movie in lib.movies().items():
-            # 默认参数捕获 name，避免闭包晚绑定
-            movie.frameChanged.connect(lambda n, name=name: self._on_frame(name, n))
-            # 兜底：主线程被阻塞导致队列溢出、最后一帧被丢弃时，
-            # frameChanged 永远到不了末尾帧；用 finished 信号保证动画链一定继续。
-            movie.finished.connect(lambda name=name: self._on_clip_finished(name))
+        for name in lib.movies():
+            self._ensure_clip_wired(name)
         self._restore_position()
         self._switch(self.idle, origin='idle')
         self._schedule_self_talk()
@@ -491,11 +499,37 @@ class PetWindow(QWidget):
     def showEvent(self, event) -> None:  # noqa: N802 (Qt 命名)
         """窗口显示时校正层级（延迟执行，避免被 Qt 窗口重建覆盖）。"""
         super().showEvent(event)
+        self._apply_smooth_timer_rate()
+        handle = self.windowHandle()
+        if handle is not None and not self._screen_signal_wired:
+            handle.screenChanged.connect(lambda _screen: self._apply_smooth_timer_rate())
+            self._screen_signal_wired = True
+        if self._hidden_paused:
+            self._hidden_paused = False
+            self.lib.resume_warm()
+            self._switch(self.anim, origin=self._animation_origin)
         on = bool(self.cfg.get('on_top', True))
         if sys.platform == 'darwin':
             QTimer.singleShot(0, lambda: _mac_set_window_level(int(self.winId()), 3 if on else 0))
         elif sys.platform == 'win32':
             QTimer.singleShot(0, lambda: _win_set_topmost(int(self.winId()), on))
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._hidden_paused = True
+        self.lib.pause_warm()
+        if self.movie is not None:
+            self.movie.stop()
+        self._move_timer.stop()
+        self._squash_timer.stop()
+        self._physics_timer.stop()
+        super().hideEvent(event)
+
+    def _apply_smooth_timer_rate(self) -> None:
+        screen = self.screen()
+        interval = smooth_interval_ms(screen.refreshRate() if screen is not None else 0)
+        self._move_timer.setInterval(interval)
+        self._squash_timer.setInterval(interval)
+        self._physics_timer.setInterval(interval)
 
     def _enforce_topmost(self) -> None:
         """置顶看门狗巡检：仅在置顶开启且可见（未被全屏隐藏）时动作。
@@ -626,16 +660,34 @@ class PetWindow(QWidget):
         """切换到指定动画（链式模型：全部一次性播放）。"""
         self._cancel_move()
         self.anim = name
+        self._animation_origin = str(origin or 'idle')
+        interactive = self._animation_origin in {'click', 'menu', 'drag'}
+        if interactive and self._warm_interaction_token is None:
+            self._warm_interaction_token = self.lib.begin_interaction()
+        elif not interactive and self._warm_interaction_token is not None:
+            self.lib.end_interaction(self._warm_interaction_token)
+            self._warm_interaction_token = None
         movie = self.lib.movie(name)
+        self._ensure_clip_wired(name)
         self.movie = movie
         movie.stop()
         movie.jumpToFrame(0)
         if hasattr(movie, 'set_playback_speed'):
             movie.set_playback_speed(self.playback_speed)
+        if hasattr(movie, 'set_recycle_minutes'):
+            movie.set_recycle_minutes(10)
         self._ended_fired = False
         self._rebuild_frame()
         movie.start()
         self.animation_started.emit(name, str(origin or 'idle'))
+
+    def _ensure_clip_wired(self, name: str) -> None:
+        if name in self._wired_clips:
+            return
+        movie = self.lib.movie(name)
+        movie.frameChanged.connect(lambda n, name=name: self._on_frame(name, n))
+        movie.finished.connect(lambda name=name: self._on_clip_finished(name))
+        self._wired_clips.add(name)
 
     def set_interactions_locked(self, locked: bool) -> None:
         """锁定用户动画入口，供 Codex 告别状态阻止无限延长退出。"""
@@ -951,6 +1003,9 @@ class PetWindow(QWidget):
                 return
             if not self._is_in_interactive_area(event.position().toPoint()):
                 return  # 左右留白区域不参与点击/拖拽
+            glove = getattr(self, '_glove_cursor', None)
+            if glove is not None:
+                glove.set_pressed(True)
             self._press_global = event.globalPosition().toPoint()
             self._grab_offset = self._press_global - self.pos()
             self._dragging = False
@@ -978,6 +1033,7 @@ class PetWindow(QWidget):
                 self._phys_pos = [float(self.x()), float(self.y())]
                 self._drag_target = g - self._grab_offset
                 self._physics_mode = 'drag'
+                self._physics_last_at = time.monotonic()
                 self._physics_timer.start()
             else:
                 self.move(g - self._grab_offset)
@@ -1005,6 +1061,9 @@ class PetWindow(QWidget):
             super().mouseReleaseEvent(event)
             return
         was_dragging = self._dragging
+        glove = getattr(self, '_glove_cursor', None)
+        if glove is not None:
+            glove.set_pressed(False)
         g = event.globalPosition().toPoint()
         dist = 0.0
         if self._press_global is not None:
@@ -1027,6 +1086,7 @@ class PetWindow(QWidget):
                     self._phys_vel[0] = rvx
                     self._phys_vel[1] = rvy
                     self._physics_mode = 'throw'
+                    self._physics_last_at = time.monotonic()
                     self._physics_timer.start()
             else:
                 if self._grab_offset is not None:
@@ -1206,6 +1266,14 @@ class PetWindow(QWidget):
         m_clicks = m_anim.addMenu('点击回应')
         for n in self.clicks:
             m_clicks.addAction(n, lambda n=n: self._play_menu_animation(n))
+        if self.work_events:
+            m_work = m_anim.addMenu('工作状态')
+            for n in self.work_events:
+                m_work.addAction(n, lambda n=n: self._play_menu_animation(n))
+        if self.balances:
+            m_balance = m_anim.addMenu('余额')
+            for n in self.balances:
+                m_balance.addAction(n, lambda n=n: self._play_menu_animation(n))
         m_acts = m_anim.addMenu('随机动作')
         for n in self.acts:
             m_acts.addAction(n, lambda n=n: self._play_menu_animation(n))
@@ -1430,29 +1498,30 @@ class PetWindow(QWidget):
     def _stop_physics(self) -> None:
         self._physics_timer.stop()
         self._physics_mode = None
+        self._physics_last_at = None
 
     def _on_physics_tick(self) -> None:
+        now = time.monotonic()
+        elapsed = 0.016 if self._physics_last_at is None else now - self._physics_last_at
+        self._physics_last_at = now
         if self._physics_mode == 'drag':
-            self._tick_drag_physics()
+            self._tick_drag_physics(elapsed)
         elif self._physics_mode == 'throw':
-            self._tick_throw_physics()
+            self._tick_throw_physics(elapsed)
 
-    def _tick_drag_physics(self) -> None:
+    def _tick_drag_physics(self, elapsed: float = 0.016) -> None:
         if self._drag_target is None:
             return
-        dt = 0.016
         tx, ty = self._drag_target.x(), self._drag_target.y()
-        px, py = self._phys_pos
-        # 弹簧跟随 + 过阻尼（ζ≈1.06）：紧致跟手、不 overshoot，
-        # 鼠标速度只在松手时作为抛掷初速（见 mouseReleaseEvent），不在此处注入
-        self._phys_vel[0] = physics_mod.spring_velocity(self._phys_vel[0], px, tx, dt)
-        self._phys_vel[1] = physics_mod.spring_velocity(self._phys_vel[1], py, ty, dt)
-        self._phys_pos[0] += self._phys_vel[0] * dt
-        self._phys_pos[1] += self._phys_vel[1] * dt
+        for dt in physics_substeps(elapsed):
+            px, py = self._phys_pos
+            self._phys_vel[0] = physics_mod.spring_velocity(self._phys_vel[0], px, tx, dt)
+            self._phys_vel[1] = physics_mod.spring_velocity(self._phys_vel[1], py, ty, dt)
+            self._phys_pos[0] += self._phys_vel[0] * dt
+            self._phys_pos[1] += self._phys_vel[1] * dt
         self.move(int(round(self._phys_pos[0])), int(round(self._phys_pos[1])))
 
-    def _tick_throw_physics(self) -> None:
-        dt = 0.016
+    def _tick_throw_physics(self, elapsed: float = 0.016) -> None:
         scr = self._screen_available()
         avail = scr.availableGeometry()
         # 忽略左右留白：角色实际可视区域约为窗口中间 1/3，
@@ -1462,12 +1531,16 @@ class PetWindow(QWidget):
         top = float(avail.top())
         right = float(avail.right() - self._w + margin)
         bottom = float(avail.bottom() - self._h)
-        px, py, vx, vy, bounced = physics_mod.throw_step(
-            self._phys_pos[0], self._phys_pos[1],
-            self._phys_vel[0], self._phys_vel[1],
-            dt, left, top, right, bottom)
-        self._phys_pos = [px, py]
-        self._phys_vel = [vx, vy]
+        bounced = False
+        for dt in physics_substeps(elapsed):
+            px, py, vx, vy, step_bounced = physics_mod.throw_step(
+                self._phys_pos[0], self._phys_pos[1], self._phys_vel[0], self._phys_vel[1],
+                dt, left, top, right, bottom)
+            self._phys_pos = [px, py]
+            self._phys_vel = [vx, vy]
+            bounced = bounced or step_bounced
+        px, py = self._phys_pos
+        vx, vy = self._phys_vel
         self.move(int(round(px)), int(round(py)))
         # 贴地且双轴低速（或碰边后整体低速）时彻底停下
         if physics_mod.is_at_rest(py, vx, vy, bottom, bounced, math.hypot(vx, vy)):
@@ -1577,4 +1650,8 @@ class PetWindow(QWidget):
         self._self_talk_timer.stop()
         self._cancel_animation_gap()
         self._speech_bubble.hide()
+        if self._warm_interaction_token is not None:
+            self.lib.end_interaction(self._warm_interaction_token)
+            self._warm_interaction_token = None
+        self.lib.cleanup()
         super().closeEvent(event)
