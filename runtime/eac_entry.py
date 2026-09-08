@@ -50,7 +50,9 @@ from PySide6.QtWidgets import QApplication
 
 from pet.config import Config
 from pet.library import MovieLibrary
+from pet.webm_clip import set_first_frame_budget
 from pet.window import PetWindow
+from pet.glove_cursor import install_glove_cursor
 
 ASSET_DIR = ROOT / "assets" / "characters" / "shenshen" / "videos"
 
@@ -66,12 +68,21 @@ STATE_PRIORITY = {
 
 SCENE_DEFAULT = {
     "IDLE": ["待机呼吸休闲"],
-    "THINKING": ["深度思考碎碎念", "原地专心玩魔方", "写代码"],
-    "WORKING": ["原地敲击桌面互动", "写代码", "玩游戏气急败坏"],
-    "WAITING": ["原地小憩沉眠", "打瞌睡被惊醒"],
-    "SUCCESS": ["点击回应 - 开心跃动"],
-    "ERROR": ["被吓一跳", "玩游戏气急败坏"],
+    "THINKING": ["工作状态-思考冒泡", "深度思考碎碎念", "原地专心玩魔方", "写代码"],
+    "WORKING": ["工作状态-忙碌点按", "原地敲击桌面互动", "写代码", "玩游戏气急败坏"],
+    "WAITING": ["工作状态-原地踱步张望", "原地小憩沉眠", "打瞌睡被惊醒"],
+    "SUCCESS": ["工作状态-雀跃庆祝"],
+    "ERROR": ["工作状态-垂头叹气冒汗"],
     "DISCONNECTED": ["原地小憩沉眠"],
+}
+
+ANIMATION_CUES = {
+    "task-thinking": "工作状态-思考冒泡",
+    "tool-working": "工作状态-忙碌点按",
+    "tool-finished": "工作状态-清点归档",
+    "approval-waiting": "工作状态-原地踱步张望",
+    "task-success": "工作状态-雀跃庆祝",
+    "task-error": "工作状态-垂头叹气冒汗",
 }
 
 SCENE_ALTERNATE = {
@@ -176,7 +187,8 @@ class EacPetController:
         self.config.set("chat", self.config.data.get("chat", {}))
         self.config.save()
 
-        self.library = MovieLibrary(asset_dir=ASSET_DIR)
+        set_first_frame_budget(8 * 1024 * 1024)
+        self.library = MovieLibrary(asset_dir=ASSET_DIR, prewarm_policy="balanced", prewarm_enabled=True)
         self.window = PetWindow(self.library, self.config)
         self.window.on_open_chat = None
         self.window.on_open_chat_settings = None
@@ -189,6 +201,11 @@ class EacPetController:
         self.window.bubble_dismissed.connect(self._on_bubble_dismissed)
         self.window.visibility_requested.connect(self._request_visibility)
         self.window.setWindowTitle("Codex Dafeiyu " + self.card_id)
+        self.glove_cursor = install_glove_cursor(app, self.window, ROOT / "assets" / "cursors")
+        self.window._glove_cursor = self.glove_cursor
+        self.library.schedule_high_priority_warm()
+        self.library.schedule_low_priority_warm()
+        app.aboutToQuit.connect(self.library.cleanup)
 
         # Offset multiple cards so they do not overlap exactly.
         try:
@@ -203,6 +220,7 @@ class EacPetController:
         self.current_state = "DISCONNECTED"
         self.current_animation = self.window.anim
         self.current_origin = "idle"
+        self.pending_animation_cue: str | None = None
         self.playing_state = "DISCONNECTED"
         self.last_pick_at = 0.0
         self.pick_phase = "default"
@@ -342,6 +360,11 @@ class EacPetController:
                 self._start_farewell_animation()
             return
         now = time.monotonic()
+        cue = getattr(self, "pending_animation_cue", None)
+        self.pending_animation_cue = None
+        if cue:
+            if self._play(ANIMATION_CUES.get(cue), now, state=self.current_state, origin="controller"):
+                return
         if self.current_state in {"SUCCESS", "ERROR"} and self.playing_state == self.current_state:
             self.current_state = "IDLE"
             self.pick_phase = "default"
@@ -371,6 +394,7 @@ class EacPetController:
         self.farewell_current_finished = False
         self.farewell_window_hidden = False
         self.current_state = "DISCONNECTED"
+        self.pending_animation_cue = None
         self.agent_label = str(payload.get("agentLabel") or "Codex")[:96]
         message = str(payload.get("message") or "Codex 已关闭，下次见").strip()
         detail = str(payload.get("detail") or "Codex · 本次陪伴结束").strip()
@@ -489,6 +513,13 @@ class EacPetController:
         now = time.monotonic()
         state_changed = state != self.current_state
         self.current_state = state
+        if "animationCue" in payload:
+            cue = str(payload.get("animationCue") or "")
+            self.pending_animation_cue = cue if cue in ANIMATION_CUES else None
+            target = ANIMATION_CUES.get(cue)
+            library = getattr(self, "library", None)
+            if target and library is not None and hasattr(library, "warm_predicted"):
+                library.warm_predicted(target)
         if state_changed:
             self.pick_phase = "default"
         # The active window animation is authoritative, including direct click
@@ -545,7 +576,15 @@ class EacPetController:
 
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
-    controller = EacPetController(app)
+    try:
+        controller = EacPetController(app)
+    except Exception as exc:
+        print(json.dumps({
+            "protocolVersion": 1,
+            "kind": "start-error",
+            "detail": type(exc).__name__,
+        }), flush=True)
+        return 2
     threading.Thread(target=controller.run_reader, daemon=True).start()
     # The host queues HELLO/STATE until it receives READY, so READY must be
     # emitted proactively once the Qt event loop is about to start.

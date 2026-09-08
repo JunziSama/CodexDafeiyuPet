@@ -15,11 +15,24 @@ foreach ($forbidden in @('bridge-token', 'controller.log', 'hook-audit.json', 'c
     }
 }
 $videos = @(Get-ChildItem -LiteralPath (Join-Path $root 'runtime\assets\characters\shenshen') -Recurse -File -Filter '*.webm')
-if ($videos.Count -ne 91) { throw "Expected 91 WebM animations, found $($videos.Count)." }
+if ($videos.Count -ne 106) { throw "Expected 106 WebM animations, found $($videos.Count)." }
 $clickVideos = @(Get-ChildItem -LiteralPath (Join-Path $root 'runtime\assets\characters\shenshen\videos\click') -File -Filter '*.webm')
 $randomVideos = @(Get-ChildItem -LiteralPath (Join-Path $root 'runtime\assets\characters\shenshen\videos\random') -File -Filter '*.webm')
+$workVideos = @(Get-ChildItem -LiteralPath (Join-Path $root 'runtime\assets\characters\shenshen\videos\events\work') -File -Filter '*.webm')
+$balanceVideos = @(Get-ChildItem -LiteralPath (Join-Path $root 'runtime\assets\characters\shenshen\videos\events\balance') -File -Filter '*.webm')
 if ($clickVideos.Count -ne 5) { throw "Expected 5 click animations, found $($clickVideos.Count)." }
-if ($randomVideos.Count -ne 80) { throw "Expected 80 random animations, found $($randomVideos.Count)." }
+if ($randomVideos.Count -ne 83) { throw "Expected 83 random animations, found $($randomVideos.Count)." }
+if ($workVideos.Count -ne 6) { throw "Expected 6 work animations, found $($workVideos.Count)." }
+if ($balanceVideos.Count -ne 6) { throw "Expected 6 balance animations, found $($balanceVideos.Count)." }
+$inventory = Get-Content -Raw -LiteralPath (Join-Path $root 'runtime\assets\characters\shenshen\asset-inventory.json') | ConvertFrom-Json
+if ($inventory.animationCount -ne 106) { throw 'Asset inventory animation count is invalid.' }
+foreach ($entry in $inventory.files) {
+    $asset = Join-Path (Join-Path $root 'runtime\assets\characters\shenshen') ($entry.path -replace '/', '\')
+    if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Inventory asset is missing: $($entry.path)" }
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant() -ne $entry.sha256) {
+        throw "Inventory hash mismatch: $($entry.path)"
+    }
+}
 $safePreferences = Get-Content -Raw -LiteralPath (Join-Path $root 'config\safe-preferences.json') | ConvertFrom-Json -AsHashtable
 foreach ($forbiddenKey in @('rx','ry','chat','api_key','bridge_token','hook_last_event','hook_last_model_slug')) {
     if ($safePreferences.Contains($forbiddenKey)) { throw "Unsafe preference key is present: $forbiddenKey" }
@@ -60,5 +73,7 @@ foreach ($line in Get-Content -LiteralPath $manifestPath) {
     Animations = $videos.Count
     ClickAnimations = $clickVideos.Count
     RandomAnimations = $randomVideos.Count
+    WorkAnimations = $workVideos.Count
+    BalanceAnimations = $balanceVideos.Count
     PackageRoot = $root
 }

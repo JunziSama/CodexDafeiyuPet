@@ -104,7 +104,7 @@ foreach ($forbidden in @('bridge-token','controller.log','hook-audit.json','cont
     }
 }
 $videos = @(Get-ChildItem -LiteralPath (Join-Path $packageRoot 'runtime\assets\characters\shenshen') -Recurse -File -Filter '*.webm')
-if ($videos.Count -ne 91) { throw "Expected 91 WebM animations, found $($videos.Count)." }
+if ($videos.Count -ne 106) { throw "Expected 106 WebM animations, found $($videos.Count)." }
 
 $manifest = Join-Path $packageRoot 'PACKAGE-MANIFEST.sha256'
 $manifestLines = Get-ChildItem -LiteralPath $packageRoot -Recurse -File | Sort-Object FullName | ForEach-Object {

@@ -15,6 +15,9 @@ from typing import Any
 class PetProcess:
     """Supervise the existing JSON-lines pet runtime without importing Qt."""
 
+    RETRY_DELAYS = (1.5, 3.0, 6.0, 12.0, 30.0)
+    STABLE_SECONDS = 60.0
+
     def __init__(self, package_root: Path, event_queue: Queue, data_dir: Path | None = None) -> None:
         self.package_root = Path(package_root)
         self.runtime_entry = self.package_root / "runtime" / "eac_entry.py"
@@ -24,6 +27,21 @@ class PetProcess:
         self.ready = False
         self.expected_stop: str | None = None
         self.stop_deadline = 0.0
+        self.consecutive_failures = 0
+        self.restart_blocked = False
+        self.started_at = 0.0
+        self._stable = False
+
+    def reset_failure_lock(self) -> None:
+        self.consecutive_failures = 0
+        self.restart_blocked = False
+        self._stable = False
+
+    def _register_failure(self) -> tuple[int, float, bool]:
+        self.consecutive_failures += 1
+        self.restart_blocked = self.consecutive_failures >= len(self.RETRY_DELAYS)
+        delay = self.RETRY_DELAYS[min(self.consecutive_failures - 1, len(self.RETRY_DELAYS) - 1)]
+        return self.consecutive_failures, delay, self.restart_blocked
 
     @property
     def running(self) -> bool:
@@ -32,8 +50,11 @@ class PetProcess:
     def start(self, visible: bool = True) -> bool:
         if self.running:
             return True
+        if self.restart_blocked:
+            return False
         if not self.runtime_entry.is_file():
-            self.event_queue.put({"source": "pet", "kind": "start-error", "detail": "runtime-not-found"})
+            count, delay, blocked = self._register_failure()
+            self.event_queue.put({"source": "pet", "kind": "start-error", "detail": "runtime-not-found", "failureCount": count, "retryAfter": delay, "blocked": blocked})
             return False
         env = os.environ.copy()
         runtime_dir = self.package_root / "runtime"
@@ -66,10 +87,13 @@ class PetProcess:
             )
         except OSError as exc:
             self.process = None
-            self.event_queue.put({"source": "pet", "kind": "start-error", "detail": type(exc).__name__})
+            count, delay, blocked = self._register_failure()
+            self.event_queue.put({"source": "pet", "kind": "start-error", "detail": type(exc).__name__, "failureCount": count, "retryAfter": delay, "blocked": blocked})
             return False
         self.ready = False
         self.expected_stop = None
+        self.started_at = time.monotonic()
+        self._stable = False
         threading.Thread(target=self._read_stdout, args=(self.process,), daemon=True).start()
         threading.Thread(target=self._read_stderr, args=(self.process,), daemon=True).start()
         return True
@@ -115,6 +139,10 @@ class PetProcess:
         if process is None:
             return
         code = process.poll()
+        if code is None and not self._stable and time.monotonic() - self.started_at >= self.STABLE_SECONDS:
+            self.consecutive_failures = 0
+            self.restart_blocked = False
+            self._stable = True
         if code is None and self.expected_stop and time.monotonic() >= self.stop_deadline:
             process.kill()
             return
@@ -124,7 +152,11 @@ class PetProcess:
         self.process = None
         self.ready = False
         self.expected_stop = None
-        self.event_queue.put({"source": "pet", "kind": "exit", "code": code, "expected": expected})
+        message = {"source": "pet", "kind": "exit", "code": code, "expected": expected}
+        if not expected:
+            count, delay, blocked = self._register_failure()
+            message.update(failureCount=count, retryAfter=delay, blocked=blocked)
+        self.event_queue.put(message)
 
     def _read_stdout(self, process: subprocess.Popen[str]) -> None:
         if process.stdout is None:

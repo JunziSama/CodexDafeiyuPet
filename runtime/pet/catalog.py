@@ -67,6 +67,8 @@ DIR_MOVE = 'move'
 DIR_CLICK = 'click'
 DIR_DRAG = 'drag'
 DIR_RANDOM = 'random'
+DIR_EVENT_WORK = 'events/work'
+DIR_EVENT_BALANCE = 'events/balance'
 
 
 # ---------------------------------------------------------------- 动画映射
@@ -320,6 +322,7 @@ def build_categories(names, manifest: dict | None = None, folder_map: dict | Non
             'idle': None, 'turn': None,
             'idles': [], 'turns': [],
             'moves': [], 'clicks': [], 'drag': None, 'acts': [],
+            'work_events': [], 'balances': [],
         }
 
     idles: list[str] = []
@@ -327,6 +330,8 @@ def build_categories(names, manifest: dict | None = None, folder_map: dict | Non
     moves: list[str] = []
     clicks: list[str] = []
     drag = None
+    work_events: list[str] = []
+    balances: list[str] = []
 
     if folder_files is not None:
         by_folder: dict[str, list[str]] = {k: list(v) for k, v in folder_files.items()}
@@ -363,6 +368,8 @@ def build_categories(names, manifest: dict | None = None, folder_map: dict | Non
         drag_names = by_folder.get(DIR_DRAG, [])
         if drag_names:
             drag = drag_names[0]
+        work_events = list(by_folder.get(DIR_EVENT_WORK, []))
+        balances = list(by_folder.get(DIR_EVENT_BALANCE, []))
 
     # manifest 补充/覆盖
     if manifest:
@@ -426,7 +433,10 @@ def build_categories(names, manifest: dict | None = None, folder_map: dict | Non
         # 子目录模式下，random/ 和未知目录的内容都进入随机动作池；
         # 允许同一文件同时出现在多个分类中（例如测试时复制同一视频到多个文件夹）
         acts = []
-        known = {DIR_IDLE, DIR_TURN, DIR_MOVE, DIR_CLICK, DIR_DRAG}
+        known = {
+            DIR_IDLE, DIR_TURN, DIR_MOVE, DIR_CLICK, DIR_DRAG,
+            DIR_EVENT_WORK, DIR_EVENT_BALANCE,
+        }
         for folder, ns in by_folder.items():
             if folder == DIR_RANDOM or folder not in known:
                 acts.extend(ns)
@@ -449,6 +459,8 @@ def build_categories(names, manifest: dict | None = None, folder_map: dict | Non
         'clicks': clicks,
         'drag': drag,
         'acts': acts,
+        'work_events': work_events,
+        'balances': balances,
     }
 
 

@@ -49,6 +49,23 @@ class EventAdapterTests(unittest.TestCase):
         self.assertFalse(message["visible"])
         self.assertEqual(message["agentLabel"], "GPT-5.6 Sol")
         self.assertEqual(message["detail"], "GPT-5.6 Sol · 正在执行任务")
+        self.assertEqual(message["animationCue"], "tool-working")
+
+    def test_each_hook_maps_to_a_bounded_animation_cue(self):
+        cases = {
+            "UserPromptSubmit": "task-thinking",
+            "PreToolUse": "tool-working",
+            "PermissionRequest": "approval-waiting",
+            "Stop": "task-success",
+        }
+        for event_name, cue in cases.items():
+            with self.subTest(event=event_name):
+                event = adapt_codex_event({"hook_event_name": event_name})
+                self.assertEqual(runtime_message(event)["animationCue"], cue)
+        ok = adapt_codex_event({"hook_event_name": "PostToolUse", "tool_response": {}})
+        failed = adapt_codex_event({"hook_event_name": "PostToolUse", "tool_response": {"failed": True}})
+        self.assertEqual(runtime_message(ok)["animationCue"], "tool-finished")
+        self.assertEqual(runtime_message(failed)["animationCue"], "task-error")
 
     def test_model_labels_are_bounded_and_unknown_values_fall_back(self):
         self.assertEqual(model_label("gpt-5.6-terra"), "GPT-5.6 Terra")

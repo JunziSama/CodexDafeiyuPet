@@ -104,6 +104,36 @@ class CoreLifecycleTests(unittest.TestCase):
         self.assertEqual(self.config.get("hook_ignored_count"), 0)
         self.assertIn("已接收并用于 Codex 桌宠", self.core.status_text())
 
+    def test_bad_event_is_isolated_and_next_event_still_applies(self):
+        calls = iter([False, True])
+        def probe():
+            value = next(calls)
+            if not value:
+                raise RuntimeError("probe")
+            return value
+        self.core.process_probe = probe
+        event = {
+            "protocolVersion": 2, "event": "PreToolUse", "kind": "tool-start",
+            "state": "WORKING", "message": "工作",
+        }
+        self.core.handle_message(event)
+        self.assertEqual(self.core.last_error, "event-RuntimeError")
+        self.core.handle_message(event)
+        self.assertTrue(self.core.codex_running)
+        self.assertTrue(self.pet.running)
+
+    def test_manual_show_resets_runtime_failure_lock(self):
+        self.pet.restart_blocked = True
+        self.pet.consecutive_failures = 5
+        self.pet.reset_failure_lock = lambda: (
+            setattr(self.pet, "restart_blocked", False),
+            setattr(self.pet, "consecutive_failures", 0),
+        )
+        self.running = True
+        self.core.handle_message({"kind": "control", "action": "show"})
+        self.assertFalse(self.pet.restart_blocked)
+        self.assertEqual(self.pet.consecutive_failures, 0)
+
     def test_all_hooks_are_audited_but_ignored_without_desktop_process(self):
         self.core.current_state = "WAITING"
         self.core.current_message = "保持原状态"

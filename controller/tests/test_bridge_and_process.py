@@ -115,6 +115,32 @@ class BridgeAndProcessTests(unittest.TestCase):
             self.assertEqual(env["DSH_PET_DATA_DIR"], str(data_dir))
             self.assertEqual(env["DSH_PET_VISIBLE"], "0")
 
+    def test_pet_restart_failures_back_off_and_lock_after_five(self):
+        from queue import Queue
+        pet = PetProcess(Path.cwd(), Queue())
+        delays = []
+        for expected in range(1, 6):
+            count, delay, blocked = pet._register_failure()
+            self.assertEqual(count, expected)
+            delays.append(delay)
+        self.assertEqual(delays, [1.5, 3.0, 6.0, 12.0, 30.0])
+        self.assertTrue(blocked)
+        self.assertTrue(pet.restart_blocked)
+        pet.reset_failure_lock()
+        self.assertFalse(pet.restart_blocked)
+        self.assertEqual(pet.consecutive_failures, 0)
+
+    def test_stable_runtime_resets_failure_streak(self):
+        from queue import Queue
+        pet = PetProcess(Path.cwd(), Queue())
+        pet.process = FakeProcess()
+        pet.started_at = 10.0
+        pet.consecutive_failures = 4
+        with patch("controller.pet_process.time.monotonic", return_value=71.0):
+            pet.poll()
+        self.assertEqual(pet.consecutive_failures, 0)
+        self.assertFalse(pet.restart_blocked)
+
     def test_hook_script_sends_only_sanitized_event(self):
         received = []
         with tempfile.TemporaryDirectory() as temp:

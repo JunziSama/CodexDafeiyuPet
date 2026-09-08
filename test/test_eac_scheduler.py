@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import sys
 import unittest
 from unittest.mock import patch
@@ -102,11 +104,14 @@ class CompleteClipSchedulingTests(unittest.TestCase):
         controller.names = [
             "待机呼吸休闲", "东张西望", "螃蟹走路", "写代码",
             "点击回应 - 开心跃动", "点击回应 - 元气挥手",
+            "工作状态-思考冒泡", "工作状态-忙碌点按", "工作状态-清点归档",
+            "工作状态-原地踱步张望", "工作状态-雀跃庆祝", "工作状态-垂头叹气冒汗",
         ]
         controller.scheduler = AnimationScheduler(controller.names)
         controller.current_state = "WORKING"
         controller.current_animation = "写代码"
         controller.current_origin = "controller"
+        controller.pending_animation_cue = None
         controller.playing_state = "WORKING"
         controller.last_pick_at = 0.0
         controller.pick_phase = "default"
@@ -144,6 +149,15 @@ class CompleteClipSchedulingTests(unittest.TestCase):
         controller.apply_state({"state": "WORKING", "message": "继续处理"})
         self.assertEqual(controller.window.played, [])
 
+    def test_latest_cue_waits_for_boundary_and_supersedes_older_cue(self):
+        controller = self.make_controller()
+        controller.apply_state({"state": "WORKING", "animationCue": "tool-working"})
+        controller.apply_state({"state": "THINKING", "animationCue": "tool-finished"})
+        self.assertEqual(controller.window.played, [])
+        controller._on_animation_finished("写代码")
+        self.assertEqual(controller.window.played[-1], "工作状态-清点归档")
+        self.assertEqual(controller.window.origins[-1], "controller")
+
     def test_click_animation_is_authoritative_until_complete(self):
         controller = self.make_controller()
         click = "点击回应 - 开心跃动"
@@ -175,20 +189,38 @@ class CompleteClipSchedulingTests(unittest.TestCase):
         scheduler = AnimationScheduler(["点击回应-元气挥手"])
         self.assertEqual(scheduler.available(["点击回应 - 元气挥手"]), ["点击回应-元气挥手"])
 
-    def test_shenshen_folder_categories_keep_five_clicks_and_eighty_randoms(self):
+    def test_shenshen_folder_categories_include_upstream_event_sets(self):
         asset_dir = RUNTIME / "assets" / "characters" / "shenshen" / "videos"
         files = sorted(asset_dir.rglob("*.webm"))
         names = [path.stem for path in files]
         folder_files: dict[str, list[str]] = {}
         folder_map: dict[str, str] = {}
         for path in files:
-            folder = path.relative_to(asset_dir).parts[0].lower()
+            rel = path.relative_to(asset_dir)
+            folder = '/'.join(rel.parts[:-1]).lower()
             folder_map[path.stem] = folder
             folder_files.setdefault(folder, []).append(path.stem)
         cats = catalog.build_categories(names, folder_map=folder_map, folder_files=folder_files)
         self.assertEqual(len(cats["clicks"]), 5)
-        self.assertEqual(len(folder_files["random"]), 80)
+        self.assertEqual(len(folder_files["random"]), 83)
+        self.assertEqual(len(cats["work_events"]), 6)
+        self.assertEqual(len(cats["balances"]), 6)
+        self.assertEqual(len(files), 106)
         self.assertTrue(all(name.startswith("点击回应-") for name in cats["clicks"]))
+
+    def test_asset_inventory_covers_every_animation_and_hash(self):
+        asset_root = RUNTIME / "assets" / "characters" / "shenshen"
+        inventory = json.loads((asset_root / "asset-inventory.json").read_text(encoding="utf-8"))
+        self.assertEqual(inventory["animationCount"], 106)
+        self.assertEqual(inventory["categoryCounts"], {
+            "balance": 6, "click": 5, "drag": 1, "idle": 1,
+            "move": 3, "random": 83, "turn": 1, "work": 6,
+        })
+        self.assertEqual(len(inventory["files"]), 106)
+        for entry in inventory["files"]:
+            path = asset_root / entry["path"]
+            self.assertTrue(path.is_file(), entry["path"])
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), entry["sha256"])
 
     def test_farewell_waits_for_click_then_completes(self):
         controller = self.make_controller()

@@ -16,6 +16,7 @@ from pet.config import Config  # noqa: E402
 from pet.movement import target_y  # noqa: E402
 from pet.menu_position import above_pet  # noqa: E402
 from pet.snapping import Rect, clamp_offset, snap_offset  # noqa: E402
+from pet.timing import physics_substeps, smooth_interval_ms  # noqa: E402
 
 
 class FixedRandom:
@@ -167,6 +168,27 @@ class ConfigTests(unittest.TestCase):
                     "version": 3, "animation_gap_seconds": gap,
                 }), encoding="utf-8")
                 self.assertEqual(Config(base=base).get("idle_animation_frequency"), expected)
+
+
+class SmoothTimingTests(unittest.TestCase):
+    def test_refresh_rate_intervals(self):
+        self.assertEqual(smooth_interval_ms(60), 16)
+        self.assertEqual(smooth_interval_ms(120), 8)
+        self.assertEqual(smooth_interval_ms(144), 7)
+        self.assertEqual(smooth_interval_ms(165), 6)
+
+    def test_invalid_refresh_rate_uses_safe_default(self):
+        self.assertEqual(smooth_interval_ms(None), 16)
+        self.assertEqual(smooth_interval_ms("unknown"), 16)
+
+    def test_physics_elapsed_is_capped_and_substepped(self):
+        steps = physics_substeps(0.2)
+        self.assertAlmostEqual(sum(steps), 0.05)
+        self.assertTrue(all(step <= (1 / 120) for step in steps))
+
+    def test_non_positive_elapsed_has_no_step(self):
+        self.assertEqual(physics_substeps(0), [])
+        self.assertEqual(physics_substeps(-1), [])
 
 
 if __name__ == "__main__":
